@@ -14,35 +14,9 @@
  */
 #include "IRremote.h"
 
-#define log(a, b)          \
-    {                      \
-        Serial.print(a);   \
-        Serial.print(':'); \
-        Serial.println(b); \
-    }
-#define logRGB()             \
-    {                        \
-        Serial.print('(');   \
-        Serial.print((int)(rgb[0] * 255));     \
-        Serial.print(',');   \
-        Serial.print((int)(rgb[1] * 255));     \
-        Serial.print(',');   \
-        Serial.print((int)(rgb[2] * 255));     \
-        Serial.println(')'); \
-    }
-#define logHSL()                  \
-    {                             \
-        Serial.print('(');        \
-        Serial.print(hue);        \
-        Serial.print(',');        \
-        Serial.print(saturation); \
-        Serial.print(',');        \
-        Serial.print(brightness); \
-        Serial.println(')');      \
-    }
+//#define TINKERCAD_CODES_ON
 
-#define TINKERCAD_CODES
-#ifdef TINKERCAD_CODES
+#ifdef TINKERCAD_CODES_ON
 #define FLASH_TIME 500
 #define STEP_BRILLO 0.1
 #define TIME_SHIFT_COLOR 15
@@ -58,12 +32,6 @@
 #define VELOCIDAD_MAXIMA 20
 #endif
 
-#define LedR 9
-#define LedG 5
-#define LedB 6
-#define AUDIO A0
-#define RECV_PIN 2
-
 #define RemoteCodesSize (int)(sizeof(RemoteCodes) / sizeof(CodeFunc))
 
 // HSL: HUE [0-360], S [0-100%] L [0-100%]
@@ -74,6 +42,13 @@
         saturation = s / 100.0; \
         brightness = l / 100.0; \
     }
+
+const int LedR = 9;
+const int LedG = 5;
+const int LedB = 6;
+const int AUDIO = A0;
+const int RECV_PIN = 2;
+const int TestRemoteJumper = 3;
 
 struct CodeFunc
 {
@@ -95,6 +70,10 @@ float saturation; //  del gris al color puro.
 float brightness; //  del negro al blanco (pasando por el color)
 float rgb[3];
 unsigned int velocidad;
+unsigned long time_shift_color = 0;
+unsigned long time_fade = 0;
+unsigned long timer_alive = 0;
+unsigned long time_log_color = 0;
 
 // https://gist.github.com/postspectacular/2a4a8db092011c6743a7
 // HSV->RGB conversion based on GLSL version
@@ -111,12 +90,34 @@ void hsv2rgb(float h, float s, float b)
     rgb[2] = s * mix(1.0, constrain(abs(fract(h + 0.3333333) * 6.0 - 3.0) - 1.0, 0.0, 1.0), b);
 }
 
+void logColor()
+{
+    Serial.print("RGB(");
+    Serial.print((int)(rgb[0] * 255));
+    Serial.print(',');
+    Serial.print((int)(rgb[1] * 255));
+    Serial.print(',');
+    Serial.print((int)(rgb[2] * 255));
+    Serial.print(") HSL(");
+    Serial.print(hue);
+    Serial.print(',');
+    Serial.print(saturation);
+    Serial.print(',');
+    Serial.print(brightness);
+    Serial.println(')');
+}
+
 // enciende los leds segun el tono brillo etc.
 void show_color()
 {
     hsv2rgb(hue, saturation, brightness);
-    logRGB();
-    logHSL();
+    if (millis() - time_log_color > 500)
+    {
+        if (digitalRead(TestRemoteJumper) == 0)
+            logColor();
+        time_log_color = millis();
+    }
+
     analogWrite(LedR, (int)(rgb[0] * 255));
     analogWrite(LedG, (int)(rgb[1] * 255));
     analogWrite(LedB, (int)(rgb[2] * 255));
@@ -124,10 +125,9 @@ void show_color()
 
 void shift_hue_color()
 {
-    static unsigned long time1 = millis();
-    if (millis() - time1 > TIME_SHIFT_COLOR)
+    if (millis() - time_shift_color > TIME_SHIFT_COLOR)
     {
-        time1 = millis();
+        time_shift_color = millis();
         hue += 0.01;
         if (hue >= 1.0)
             hue = 0.0;
@@ -145,10 +145,9 @@ void refreshLeds()
     else if (is_strobe_on || is_flash_on)
     {
         static bool flash = false;
-        static unsigned long time2 = millis();
-        if (millis() - time2 > velocidad)
+        if (millis() - time_fade > velocidad)
         {
-            time2 = millis();
+            time_fade = millis();
             flash = !flash;
             if (is_strobe_on)
             {
@@ -187,23 +186,100 @@ void refreshLeds()
     show_color();
 }
 
-void rojo() { HSL(0, 100, 50); }
-void verde() { HSL(120, 255, 0); }
-void violeta() { HSL(264, 100, 27); }
-void rojo_claro() { HSL(2, 100, 57); }
-void verde_claro() { HSL(142, 100, 38); }
-void violetita() { HSL(254, 57, 48); }
-void naranjon() { HSL(15, 100, 49); }
-void celeste() { HSL(192, 100, 50); }
-void magenta() { HSL(255, 0, 255); }
-void naranja() { HSL(276, 100, 50); }
-void azulito() { HSL(217, 78, 38); }
-void lila() { HSL(276, 45, 52); }
-void amarillo() { HSL(50, 100, 50); }
-void azul() { HSL(0, 0, 255); }
-void rosa() { HSL(320, 100, 67); }
-void blanco() { HSL(0, 0, 100); }
-void negro() { HSL(0, 0, 0); }
+void dump()
+{
+    if (results.bits == 0)
+        return;
+    Serial.print(results.bits, DEC);
+    Serial.print(", ");
+    Serial.println(results.value, HEX);
+}
+
+void rojo()
+{
+    HSL(0, 100, 50);
+    Serial.println("ROJO");
+}
+void verde()
+{
+    HSL(120, 255, 0);
+    Serial.println("VERDE");
+}
+void violeta()
+{
+    HSL(264, 100, 27);
+    Serial.println("VIOLETA");
+}
+void rojo_claro()
+{
+    HSL(2, 100, 57);
+    Serial.println("ROJITO");
+}
+void verde_claro()
+{
+    HSL(142, 100, 38);
+    Serial.println("VERDITO");
+}
+void violetita()
+{
+    HSL(254, 57, 48);
+    Serial.println("VIOLETITA");
+}
+void naranjon()
+{
+    HSL(15, 100, 49);
+    Serial.println("NARANJON");
+}
+void celeste()
+{
+    HSL(192, 100, 50);
+    Serial.println("CELESTE");
+}
+void magenta()
+{
+    HSL(255, 0, 255);
+    Serial.println("MAGENTA");
+}
+void naranja()
+{
+    HSL(276, 100, 50);
+    Serial.println("NARANJA");
+}
+void azulito()
+{
+    HSL(217, 78, 38);
+    Serial.println("AZULITO");
+}
+void lila()
+{
+    HSL(276, 45, 52);
+    Serial.println("LILA");
+}
+void amarillo()
+{
+    HSL(50, 100, 50);
+    Serial.println("AMARILLO");
+}
+void azul()
+{
+    HSL(0, 0, 255);
+    Serial.println("AZUL");
+}
+void rosa()
+{
+    HSL(320, 100, 67);
+    Serial.println("ROSA");
+}
+void blanco()
+{
+    HSL(0, 0, 100);
+    Serial.println("BLANCO");
+}
+void negro()
+{
+    HSL(0, 0, 0);
+    Serial.println("NEGRO");
+}
 
 void off()
 {
@@ -214,6 +290,7 @@ void off()
     is_strobe_on = false;
     is_fade_on = false;
     is_smooth_on = false;
+    Serial.println("OFF");
 }
 
 void brillo_arriba()
@@ -225,6 +302,8 @@ void brillo_arriba()
     }
     else
         brightness += STEP_BRILLO;
+    Serial.print("BRILLO ");
+    Serial.println(brightness);
 }
 
 void brillo_abajo()
@@ -236,6 +315,8 @@ void brillo_abajo()
     }
     else
         brightness -= STEP_BRILLO;
+    Serial.print("BRILLO ");
+    Serial.println(brightness);
 }
 
 //--se enciende el audioritmico:
@@ -245,6 +326,7 @@ void w()
     is_flash_on = false;
     is_strobe_on = false;
     is_fade_on = false;
+    Serial.println("W (AUDIO)");
 }
 
 //--flash pero en lugar de negro es el color complementario
@@ -254,6 +336,7 @@ void strobe()
     is_flash_on = false;
     is_strobe_on = !is_strobe_on;
     is_fade_on = false;
+    Serial.println("STROBE");
 }
 
 //--prende apaga con el color actual (hasta con smooth)
@@ -263,12 +346,14 @@ void flashing()
     is_flash_on = !is_flash_on;
     is_strobe_on = false;
     is_fade_on = false;
+    Serial.println("FLASH");
 }
 
 // enciende el ciclo de color, sino queda en el ultimo color mostrado.
 void smooth()
 {
     is_smooth_on = !is_smooth_on;
+    Serial.println("SMOOTH");
 }
 
 // flash pero con fade in/out
@@ -278,6 +363,7 @@ void fade()
     is_flash_on = false;
     is_strobe_on = false;
     is_fade_on = !is_flash_on;
+    Serial.println("FADE");
 }
 
 /* 
@@ -292,7 +378,7 @@ teclas del control remoto:
 ==================================================
 */
 
-#ifdef TINKERCAD_CODES
+#ifndef TINKERCAD_CODES_ON
 // TinkercadRemoteCodes
 CodeFunc RemoteCodes[] = {
     {0x00FF, blanco},
@@ -345,6 +431,29 @@ CodeFunc RemoteCodes[] = {
     {0x5F7D, smooth}};
 #endif
 
+void delayedOff()
+{
+    delay(555);
+    off();
+    delay(55);
+}
+
+void showInitializingLigths()
+{
+    naranja();
+    show_color();
+    delayedOff();
+    azul();
+    show_color();
+    delayedOff();
+    amarillo();
+    show_color();
+    delayedOff();
+    verde();
+    show_color();
+    delayedOff();
+}
+
 void setup()
 {
     Serial.begin(9600);
@@ -353,8 +462,10 @@ void setup()
     pinMode(LedG, OUTPUT);
     pinMode(LedB, OUTPUT);
     pinMode(AUDIO, INPUT);
+    pinMode(TestRemoteJumper, INPUT_PULLUP);
     irrecv.enableIRIn();
     off();
+    showInitializingLigths();
 }
 
 // determino cual programa correr dependiendo del código que llegó del control remoto.
@@ -362,6 +473,9 @@ void readRemoteControl()
 {
     if (irrecv.decode(&results))
     {
+        //para ver los códigos del remoto:
+        dump();
+
         for (unsigned int i = 0; i < RemoteCodesSize; i++)
         {
             if ((results.value & 0xffff) == RemoteCodes[i].code)
@@ -377,14 +491,32 @@ void readRemoteControl()
 
 void itsAlive()
 {
-    static unsigned long timer = 0;
-    digitalWrite(13, timer < 1000);
-    if (++timer > 300000L)
-        timer = 0;
+    long t = millis() - timer_alive;
+    if (t < 111)
+    {
+        digitalWrite(13, 1);
+    }
+    else if (t < 222)
+    {
+        digitalWrite(13, 0);
+    }
+    else if (t < 333)
+    {
+        digitalWrite(13, 1);
+    }
+    else if (t < 444)
+    {
+        digitalWrite(13, 0);
+    }
+    else if (t > 3333)
+    {
+        timer_alive = millis();
+    }
 }
 
 void loop()
 {
+    itsAlive();
     readRemoteControl();
 
     // el tono de color va rotando de a poquito...
@@ -392,6 +524,4 @@ void loop()
         shift_hue_color();
 
     refreshLeds();
-
-    itsAlive();
 }

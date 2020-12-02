@@ -1,19 +1,22 @@
 #include <Arduino.h>
+#include "TimerEvent.h"
+
+TimerEvent t1 = TimerEvent();
 
 void itsAlive()
 {
-    static unsigned long timer = 0;
-    digitalWrite(13, timer < 1000);
-    if (++timer > 300000L)
-        timer = 0;
+    digitalWrite(13, 1);
+    delay(66);
+    digitalWrite(13, 0);
 }
 
 void setup()
 {
     pinMode(13, OUTPUT);
+    t1.set(1111, itsAlive);
 }
 
 void loop()
 {
-    itsAlive();
+    t1.update();
 }

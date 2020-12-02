@@ -5,12 +5,17 @@
  * 
  * -EL SMOOTH SI SE PRENDE VA BARRIENDO LOS COLORES EN CUALQUIER MOMENTO,
  *  POR EJ, EN EL FLASH, STROBE, AUDIORRITMICO.
- * -EL STROBE ES UN FLASH DE ROJO A COLOR (EL QUE SE SELECCIONE)
- * -EL FLASH ES NEGRO A COLOR.
- * -EL FADE APAGA TODO DE A POCO.
+ * -EL STROBE ES UN FLASH DEL NEGRO AL COLOR SELECCIONADO.
+ * -EL FLASH ES NEGRO A BLANCO.
+ * -EL FADE ES UN FLASH SUAVE, DE NEGRO AL COLOR SELECCIONADO.
+ * -LA TECLA W ES EL AUDIORRITMICO.
+ * 
+ * -LAS FLECHAS ARRIBA / ABAJO CAMBIAN LA VELOCIDAD DE LOS FLASHES,
+ *  PERO EN COLORES FIJOS CAMBIA EL BRILLO,
+ *  (EN AUDIORRITMICO NO TIENE EFECTO, YA QUE EL BRILLO CAMBIA CON LA MUSICA)
  * 
  * JAVIER RAMBALDO
- * JUNIO DE 2020
+ * NOVIEMBRE DE 2020
  */
 #include "IRremote.h"
 #include "TimerEvent.h"
@@ -26,7 +31,6 @@
 #define RemoteCodesSize (int)(sizeof(RemoteCodes) / sizeof(CodeFunc))
 
 // HSL: HUE [0-360], S [0-100%] L [0-100%]
-//#define HSL(h, s, l) hsv2rgb(h / 360.0, s / 100.0, l / 100.0)
 #define HSL(h, s, l)            \
     {                           \
         hue = h / 360.0;        \
@@ -34,10 +38,11 @@
         brightness = l / 100.0; \
     }
 
+//-- configuracion de los pines del arduino.
 const int LedR = 9;
 const int LedG = 5;
 const int LedB = 6;
-const int AUDIO = A0;
+const int AUDIO_IN = A0;
 const int RECV_PIN = 2;
 const int DebugColorJumper = 3;
 const int CambioHslHsv = 4;
@@ -99,19 +104,26 @@ void HSL2RGB(float h, float s, float l)
 
 void logColor()
 {
-    Serial.print("RGB(");
-    Serial.print(rgb.R);
-    Serial.print(',');
-    Serial.print(rgb.G);
-    Serial.print(',');
-    Serial.print(rgb.B);
-    Serial.print(") HSL(");
-    Serial.print(hue);
-    Serial.print(',');
-    Serial.print(saturation);
-    Serial.print(',');
-    Serial.print(brightness);
-    Serial.println(')');
+    static byte R, G, B;
+   // if (rgb.R - R + rgb.G - G + rgb.B - B == 0)
+    {
+        R = rgb.R;
+        G = rgb.G;
+        B = rgb.B;
+        Serial.print("RGB(");
+        Serial.print(rgb.R);
+        Serial.print(',');
+        Serial.print(rgb.G);
+        Serial.print(',');
+        Serial.print(rgb.B);
+        Serial.print(") HSL(");
+        Serial.print(hue);
+        Serial.print(',');
+        Serial.print(saturation);
+        Serial.print(',');
+        Serial.print(brightness);
+        Serial.println(')');
+    }
 }
 
 // enciende los leds segun el tono brillo etc.
@@ -122,13 +134,6 @@ void show_color()
     // pasando por un 50% de tono puro.
     HSL2RGB(hue, saturation, brightness);
 
-    static unsigned long time_log_color = 0;
-    if (millis() - time_log_color > 500)
-    {
-        if (digitalRead(DebugColorJumper) == 0)
-            logColor();
-        time_log_color = millis();
-    }
     analogWrite(LedR, rgb.R);
     analogWrite(LedG, rgb.G);
     analogWrite(LedB, rgb.B);
@@ -149,7 +154,16 @@ float min = 1024, max = 0, atenuacion, brillo;
 void tomarAudio()
 {
     // leo el audio analogico
-    int adc = analogRead(AUDIO);
+    int adc = analogRead(AUDIO_IN) / 1023.0;
+    adc *= 2;
+    if (adc < 0.01)
+        adc = 0;
+    brightness = adc;
+
+    /*    TODO: ver como hacer..un control automatico de volumen 
+
+    // leo el audio analogico
+    int adc = analogRead(AUDIO_IN)/1023.0;
 
     // guardo los picos o extremos:
     if (adc < min)
@@ -177,7 +191,7 @@ void tomarAudio()
     min += 0.5;
     max -= 0.5;
 
-    brightness = brillo / 10.0;
+    brightness = brillo / 10.0;*/
 }
 
 void refreshLeds()
@@ -186,7 +200,6 @@ void refreshLeds()
     {
         //-- audiorritmico: enciende las luces según el valor de tensión que ingresa por A0:
         //-- subo solo el brillo, el tono lo da el HUE global.
-        //brightness = (float)analogRead(AUDIO) / 1024.0;
         tomarAudio();
     }
     else if (is_strobe_on || is_flash_on)
@@ -533,7 +546,7 @@ void setup()
     pinMode(LedR, OUTPUT);
     pinMode(LedG, OUTPUT);
     pinMode(LedB, OUTPUT);
-    pinMode(AUDIO, INPUT);
+    pinMode(AUDIO_IN, INPUT);
     pinMode(DebugColorJumper, INPUT_PULLUP);
     pinMode(CambioHslHsv, INPUT_PULLUP);
     irrecv.enableIRIn();
@@ -588,4 +601,7 @@ void loop()
         shift_hue_color();
 
     refreshLeds();
+
+    if (!digitalRead(DebugColorJumper))
+        logColor();
 }

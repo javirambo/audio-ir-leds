@@ -1,4 +1,8 @@
 /**
+ * VERSION 7 - Año 2025
+ * -Le agrego multiples remotos.
+ * -Algunos refactors
+ * 
  * VERSION 6
  * cambios desde la V3:
  * +cambie todos los colores a HSV...no va mas el RGB.
@@ -15,8 +19,9 @@
  *  (EN AUDIORRITMICO NO TIENE EFECTO, YA QUE EL BRILLO CAMBIA CON LA MUSICA)
  *
  * JAVIER RAMBALDO
- * NOVIEMBRE DE 2020
+ * NOVIEMBRE DE 2020/2025
  */
+
 #include "IRremote/IRremote.h"
 #include "HSLToRGB.h"
 

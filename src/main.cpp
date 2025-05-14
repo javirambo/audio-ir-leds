@@ -1,19 +1,24 @@
 /**
- * VERSION 4
+ * VERSION 6
  * cambios desde la V3:
- * +cambie todos los colores a HSL...no va mas el RGB.
- * 
+ * +cambie todos los colores a HSV...no va mas el RGB.
+ *
  * -EL SMOOTH SI SE PRENDE VA BARRIENDO LOS COLORES EN CUALQUIER MOMENTO,
  *  POR EJ, EN EL FLASH, STROBE, AUDIORRITMICO.
- * -EL STROBE ES UN FLASH DE ROJO A COLOR (EL QUE SE SELECCIONE)
- * -EL FLASH ES NEGRO A COLOR.
- * -EL FADE APAGA TODO DE A POCO.
- * 
+ * -EL STROBE ES UN FLASH DEL NEGRO AL COLOR SELECCIONADO.
+ * -EL FLASH ES NEGRO A BLANCO.
+ * -EL FADE ES UN FLASH SUAVE, DE NEGRO AL COLOR SELECCIONADO.
+ * -LA TECLA W ES EL AUDIORRITMICO.
+ *
+ * -LAS FLECHAS ARRIBA / ABAJO CAMBIAN LA VELOCIDAD DE LOS FLASHES,
+ *  PERO EN COLORES FIJOS CAMBIA EL BRILLO,
+ *  (EN AUDIORRITMICO NO TIENE EFECTO, YA QUE EL BRILLO CAMBIA CON LA MUSICA)
+ *
  * JAVIER RAMBALDO
- * JUNIO DE 2020
+ * NOVIEMBRE DE 2020
  */
-#include "IRremote.h"
-#include "TimerEvent.h"
+#include "IRremote/IRremote.h"
+#include "HSLToRGB.h"
 
 #define STEP_BRILLO 0.033
 #define BRILLO_MAXIMO 0.5
@@ -25,22 +30,12 @@
 
 #define RemoteCodesSize (int)(sizeof(RemoteCodes) / sizeof(CodeFunc))
 
-// HSL: HUE [0-360], S [0-100%] L [0-100%]
-//#define HSL(h, s, l) hsv2rgb(h / 360.0, s / 100.0, l / 100.0)
-#define HSL(h, s, l)            \
-    {                           \
-        hue = h / 360.0;        \
-        saturation = s / 100.0; \
-        brightness = l / 100.0; \
-    }
-
+//-- configuracion de los pines del arduino.
 const int LedR = 9;
 const int LedG = 5;
 const int LedB = 6;
-const int AUDIO = A0;
+const int AUDIO_IN = A0;
 const int RECV_PIN = 2;
-const int DebugColorJumper = 3;
-const int CambioHslHsv = 4;
 
 struct CodeFunc
 {
@@ -56,100 +51,39 @@ bool is_flash_on;
 bool is_strobe_on;
 bool is_fade_on;
 bool is_smooth_on;
-
-float hue;        // tono de rojo a rojo
-float saturation; //  del gris al color puro.
-float brightness; //  del negro al blanco (pasando por el color)
 unsigned int velocidad;
-unsigned long time_shift_color = 0;
+HSL selected_color;
 
-struct
+void logColor(float R, float G, float B, float H, float S, float V)
 {
-    byte R, G, B;
-} rgb;
-
-// lo saqué de aca:
-// https://codegolf.stackexchange.com/questions/150250/hsl-to-rgb-values
-// The arguments are float hsl[3] and int rgb[3]
-#define S(o, n) r[t[int(h[0]) / 60 * 3 + o] + o - 2] = (n + h[2] - c / 2) * 255;
-void C(float *h, int *r)
-{
-    float g = 2 * h[2] - 1, c = (g < 0 ? 1 + g : 1 - g) * h[1], a = int(h[0]) % 120 / 60.f - 1;
-    int t[] = {2, 2, 2, 3, 1, 2, 3, 3, 0, 4, 2, 0, 4, 1, 1, 2, 3, 1};
-    S(0, c)
-    S(1, c * (a < 0 ? 1 + a : 1 - a))
-    S(2, 0)
-}
-
-//(esta función es para adaptarla al uso de HSV2RGB)
-void HSL2RGB(float h, float s, float l)
-{
-    // h = hue; s = saturation; l = Lightness (luminancia)
-    int RGB[3]; // resultado
-    float H[3];
-    H[0] = h * 360.0; // convierto los valores de hue [0-1] a [0-360]
-    H[1] = s;
-    H[2] = l;
-    C(H, RGB);
-    //uso la estructura RGB anterior para devolver los valores
-    rgb.R = RGB[0];
-    rgb.G = RGB[1];
-    rgb.B = RGB[2];
-}
-
-void logColor()
-{
-    Serial.print("RGB(");
-    Serial.print(rgb.R);
-    Serial.print(',');
-    Serial.print(rgb.G);
-    Serial.print(',');
-    Serial.print(rgb.B);
-    Serial.print(") HSL(");
-    Serial.print(hue);
-    Serial.print(',');
-    Serial.print(saturation);
-    Serial.print(',');
-    Serial.print(brightness);
-    Serial.println(')');
-}
-
-// enciende los leds segun el tono brillo etc.
-void show_color()
-{
-    // convierte el espacio de color HSL a RGB:
-    // el value es la luminancia: del negro (0%) al blanco (100%),
-    // pasando por un 50% de tono puro.
-    HSL2RGB(hue, saturation, brightness);
-
-    static unsigned long time_log_color = 0;
-    if (millis() - time_log_color > 500)
+    static byte bR, bG, bB;
+    if (R - bR + G - bG + B - bB != 0)
     {
-        if (digitalRead(DebugColorJumper) == 0)
-            logColor();
-        time_log_color = millis();
-    }
-    analogWrite(LedR, rgb.R);
-    analogWrite(LedG, rgb.G);
-    analogWrite(LedB, rgb.B);
-}
-
-void shift_hue_color()
-{
-    if (millis() - time_shift_color > TIME_SHIFT_COLOR)
-    {
-        time_shift_color = millis();
-        hue += 0.001;
-        if (hue >= 1.0)
-            hue = 0.0;
+        bR = R;
+        bG = G;
+        bB = B;
+        Serial.print("RGB(");
+        Serial.print(R);
+        Serial.print(',');
+        Serial.print(G);
+        Serial.print(',');
+        Serial.print(B);
+        Serial.print(") selected_color = HSL(");
+        Serial.print(H);
+        Serial.print(',');
+        Serial.print(S);
+        Serial.print(',');
+        Serial.print(V);
+        Serial.println(')');
     }
 }
 
-float min = 1024, max = 0, atenuacion, brillo;
-void tomarAudio()
+float leerAudio()
 {
+    static float max, min, adc, top, val, percent;
+
     // leo el audio analogico
-    int adc = analogRead(AUDIO);
+    adc = analogRead(A0);
 
     // guardo los picos o extremos:
     if (adc < min)
@@ -158,36 +92,44 @@ void tomarAudio()
         max = adc;
 
     // control automático de ganancia:
-    atenuacion = (max / min) * 20.5;
-
-    // le aplico un logaritmo para atenuar los picos máximos
-    brillo = log(adc / atenuacion);
-
-    //controlo saturacion: brillo va de 0 a 1
-    if (brillo < 0)
-        brillo = 0;
-    if (brillo > 1.0)
-        brillo = 1.0;
+    top = (max - min);
+    val = (adc - min);
+    percent = val / top;
 
     // compuerta de sonido: lo apaga si no hay sonido.
-    if (max - min <= 1)
-        brillo = 0;
+    if (top < 3)
+    {
+        percent = 0;
+        digitalWrite(13, 1);
+    }
+    else
+    {
+        digitalWrite(13, 0);
+    }
+
+    // controlo saturacion: brillo va de 0 a 1
+    if (percent < 0)
+        percent = 0;
+    if (percent > 1)
+        percent = 1;
 
     // los extremos se van juntando o normalizando suavemente:
-    min += 0.5;
-    max -= 0.5;
+    min += 0.001;
+    max -= 0.001;
 
-    brightness = brillo / 10.0;
+    return percent;
 }
 
 void refreshLeds()
 {
+    // HSL color = HSL(selected_color.H, selected_color.S, selected_color.L);
+
     if (is_w_on)
     {
         //-- audiorritmico: enciende las luces según el valor de tensión que ingresa por A0:
         //-- subo solo el brillo, el tono lo da el HUE global.
-        //brightness = (float)analogRead(AUDIO) / 1024.0;
-        tomarAudio();
+        float nivel_audio = leerAudio();
+        selected_color.L = nivel_audio;
     }
     else if (is_strobe_on || is_flash_on)
     {
@@ -199,22 +141,22 @@ void refreshLeds()
             flash = !flash;
             if (is_strobe_on)
             {
-                //es un flash pero con el color seleccionado
+                // es un flash pero con el color seleccionado
                 if (flash)
-                    brightness = 0;
+                    selected_color.L = 0.5;
                 else
-                    brightness = 0.5;
+                    selected_color.L = 0;
             }
             else
             {
-                //prende/apaga el flash.
+                // prende/apaga el flash.
                 if (flash)
                 {
-                    HSL(0, 0, 100); // blanco
+                    selected_color = HSL(0, 0, 1); // blanco
                 }
                 else
                 {
-                    HSL(0, 0, 0); // negro
+                    selected_color = HSL(0, 0, 0); // negro
                 }
             }
         }
@@ -229,25 +171,32 @@ void refreshLeds()
             time = millis();
             if (sube)
             {
-                brightness += 0.01;
-                if (brightness >= 0.5)
+                selected_color.L += 0.01;
+                if (selected_color.L >= 0.5)
                 {
                     sube = false;
-                    brightness = 0.5;
+                    selected_color.L = 0.5;
                 }
             }
             else
             {
-                brightness -= 0.01;
-                if (brightness <= 0)
+                selected_color.L -= 0.01;
+                if (selected_color.L <= 0)
                 {
                     sube = true;
-                    brightness = 0;
+                    selected_color.L = 0;
                 }
             }
         }
     }
-    show_color();
+
+    // enciende los leds segun el tono brillo etc.
+    // convierte el espacio de color HSL a RGB.
+
+    RGB rgb = HSLToRGB(selected_color);
+    analogWrite(LedR, rgb.R);
+    analogWrite(LedG, rgb.G);
+    analogWrite(LedB, rgb.B);
 }
 
 void dump()
@@ -266,87 +215,87 @@ void dump()
 
 void rojo()
 {
-    HSL(0, 100, 25);
+    selected_color = HSL(0, 1, 0.5);
     Serial.println("ROJO");
 }
 void verde()
 {
-    HSL(120, 100, 50);
+    selected_color = HSL(120, 1, 0.5);
     Serial.println("VERDE");
 }
 void violeta()
 {
-    HSL(240, 100, 20);
+    selected_color = HSL(274, 1, 0.5);
     Serial.println("VIOLETA");
 }
 void rojo_claro()
 {
-    HSL(0, 100, 50);
+    selected_color = HSL(343, 1, 0.5);
     Serial.println("ROJITO");
 }
 void verde_claro()
 {
-    HSL(140, 100, 30);
+    selected_color = HSL(152, 1, 0.5);
     Serial.println("VERDITO");
 }
 void violetita()
 {
-    HSL(270, 100, 35);
+    selected_color = HSL(285, 1, 0.6);
     Serial.println("VIOLETITA");
 }
 void naranjon()
 {
-    HSL(24, 100, 50);
+    selected_color = HSL(16, 1, .46);
     Serial.println("NARANJON");
 }
 void celeste()
 {
-    HSL(195, 100, 60);
+    selected_color = HSL(195, .8, .45);
     Serial.println("CELESTE");
 }
 void magenta()
 {
-    HSL(340, 100, 30);
+    selected_color = HSL(340, 1, .4);
     Serial.println("MAGENTA");
 }
 void naranja()
 {
-    HSL(36, 100, 50);
+    selected_color = HSL(36, .66, .5);
     Serial.println("NARANJA");
 }
 void azulito()
 {
-    HSL(200, 100, 20);
+    selected_color = HSL(200, 1, .35);
     Serial.println("AZULITO");
 }
 void lila()
 {
-    HSL(300, 100, 35);
+    selected_color = HSL(300, .80, .4);
     Serial.println("LILA");
 }
 void amarillo()
 {
-    HSL(60, 100, 50);
+    selected_color = HSL(60, 1, .5);
     Serial.println("AMARILLO");
 }
 void azul()
 {
-    HSL(240, 100, 50);
+    selected_color = HSL(240, 1, .5);
     Serial.println("AZUL");
 }
 void rosa()
 {
-    HSL(315, 100, 60);
+    selected_color = HSL(315, .5, .5);
     Serial.println("ROSA");
 }
 void blanco()
 {
-    HSL(0, 0, 100);
+    selected_color = HSL(0, 0, 1);
     Serial.println("BLANCO");
 }
 void negro()
 {
-    HSL(0, 0, 0);
+    selected_color = HSL(0, 0, 0);
     Serial.println("NEGRO");
 }
 
@@ -375,12 +324,12 @@ void brillo_arriba()
     }
     else
     {
-        if (brightness < BRILLO_MAXIMO)
-            brightness += STEP_BRILLO;
-        if (brightness > BRILLO_MAXIMO)
-            brightness = BRILLO_MAXIMO;
+        if (selected_color.L < BRILLO_MAXIMO)
+            selected_color.L += STEP_BRILLO;
+        if (selected_color.L > BRILLO_MAXIMO)
+            selected_color.L = BRILLO_MAXIMO;
         Serial.print("BRILLO ^ ");
-        Serial.println(brightness);
+        Serial.println(selected_color.L);
     }
 }
 
@@ -397,12 +346,12 @@ void brillo_abajo()
     }
     else
     {
-        if (brightness > 0)
-            brightness -= STEP_BRILLO;
-        if (brightness < 0)
-            brightness = 0;
+        if (selected_color.L > 0)
+            selected_color.L -= STEP_BRILLO;
+        if (selected_color.L < 0)
+            selected_color.L = 0;
         Serial.print("BRILLO v ");
-        Serial.println(brightness);
+        Serial.println(selected_color.L);
     }
 }
 
@@ -462,7 +411,7 @@ void fade()
     Serial.println(is_fade_on ? "ON" : "OFF");
 }
 
-/* 
+/*
 teclas del control remoto:
 ==================================================
   BRILLO_ARRIBA, BRILLO_ABAJO, OFF,       ON,
@@ -500,29 +449,29 @@ CodeFunc RemoteCodes[] = {
     {0x6897, rosa},
     {0xE817, smooth}};
 
-void delayedOff()
-{
-    delay(222);
-    off();
-    delay(11);
-}
+// void delayedOff()
+// {
+//     delay(222);
+//     off();
+//     delay(11);
+// }
 
 void showInitializingLigths()
 {
-    hue = 0;
-    saturation = 1;
-    brightness = 0;
+    selected_color.S = 1;
+    selected_color.L = 0;
     for (int i = 0; i < 100; i++)
     {
-        brightness += 0.005;
-        show_color();
+        selected_color.L += 0.005;
+        refreshLeds();
         delay(i < 50 ? 10 : 5);
     }
     for (int i = 0; i < 100; i++)
     {
-        brightness -= 0.005;
-        show_color();
-        delay(i < 50 ? 5 : i > 90 ? 20 : 10);
+        selected_color.L -= 0.005;
+        refreshLeds();
+        delay(i < 50 ? 5 : i > 90 ? 20
+                                  : 10);
     }
 }
 
@@ -533,9 +482,7 @@ void setup()
     pinMode(LedR, OUTPUT);
     pinMode(LedG, OUTPUT);
     pinMode(LedB, OUTPUT);
-    pinMode(AUDIO, INPUT);
-    pinMode(DebugColorJumper, INPUT_PULLUP);
-    pinMode(CambioHslHsv, INPUT_PULLUP);
+    pinMode(AUDIO_IN, INPUT);
     irrecv.enableIRIn();
     off();
     showInitializingLigths();
@@ -546,7 +493,7 @@ void readRemoteControl()
 {
     if (irrecv.decode(&results))
     {
-        //para ver los códigos del remoto:
+        // para ver los códigos del remoto:
         dump();
 
         for (unsigned int i = 0; i < RemoteCodesSize; i++)
@@ -585,7 +532,11 @@ void loop()
 
     // el tono de color va rotando de a poquito...
     if (is_smooth_on)
-        shift_hue_color();
+    {
+        selected_color.H += 0.001;
+        if (selected_color.H > 360)
+            selected_color.H = 0;
+    }
 
     refreshLeds();
 }

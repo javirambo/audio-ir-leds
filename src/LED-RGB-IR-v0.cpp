@@ -1,4 +1,4 @@
-#include "IRremote.h"
+#include "IRremote/IRremote.h"
 
 #define LR 3
 #define LG 5
